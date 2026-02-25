@@ -1,24 +1,40 @@
 import psycopg2
+import os
+from flask import Flask
+from threading import Thread
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# --- الإعدادات ---
+# --- إعدادات السيرفر الوهمي (لإبقاء البوت حياً على Render) ---
+server = Flask('')
+
+@server.route('/')
+def home():
+    return "GIGA HUB BOT IS ALIVE!"
+
+def run_flask():
+    # Render يعطي المنفذ تلقائياً في المتغير PORT
+    port = int(os.environ.get('PORT', 8080))
+    server.run(host='0.0.0.0', port=port)
+
+# --- إعدادات البوت وقاعدة البيانات ---
 TOKEN = "8661416877:AAHekEPVunPAqrRo00vtiXSu0wMIKgjj9u4"
 ADMIN_ID = "7605888782"
-# ملاحظة: psycopg2 يستخدم الرابط المباشر من Supabase كما هو
 DB_URI = "postgresql://postgres.otsyexflfhwzklnojiev:Qrv5.N%2B_*gAmek6@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
 BASE_URL = "https://giga-hub.onrender.com/"
 
 def get_db_connection():
     return psycopg2.connect(DB_URI)
 
-# --- المهام ---
+# --- المهام (Handlers) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
-    # حفظ المستخدم في القاعدة السحابية
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("INSERT INTO telegram_user (chat_id) VALUES (%s) ON CONFLICT DO NOTHING", (chat_id,))
-    conn.commit(); cur.close(); conn.close()
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("INSERT INTO telegram_user (chat_id) VALUES (%s) ON CONFLICT DO NOTHING", (chat_id,))
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        print(f"Database Error: {e}")
     
     await update.message.reply_text("👋 مرحباً بك في GIGA HUB!\nأرسل اسم البرنامج للبحث عنه، أو استقبل الإشعارات هنا.")
 
@@ -51,11 +67,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=ADMIN_ID, text=f"🔔 طلب برنامج جديد: {app_name}\nمن: {update.effective_user.first_name}")
         await query.edit_message_text(f"✅ تم إرسال طلبك لإضافة '{app_name}'.")
 
+# --- التشغيل الرئيسي ---
 def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.run_polling()
+    # تشغيل Flask في خيط منفصل
+    t = Thread(target=run_flask)
+    t.start()
 
-if __name__ == "__main__": main()
+    # تشغيل البوت
+    print("🤖 البوت بدأ العمل...")
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
